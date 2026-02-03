@@ -1,0 +1,2 @@
+public enum DeepSeekOCR2 {}
+

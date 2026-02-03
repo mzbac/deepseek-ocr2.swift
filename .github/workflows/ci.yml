@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 16.0
+
+      - name: Enable PrepareMetalShaders plugin
+        run: defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidation -bool YES
+
+      - name: Verify runner architecture
+        run: |
+          arch="$(uname -m)"
+          echo "arch=$arch"
+          if [ "$arch" != "arm64" ]; then
+            echo "This project requires Apple Silicon (mlx-swift). Got: $arch" >&2
+            exit 1
+          fi
+
+      - name: Run tests
+        run: |
+          xcodebuild test -scheme DeepSeekOCR2-Package -destination 'platform=macOS' -skipPackagePluginValidation ENABLE_PLUGIN_PREPAREMLSHADERS=YES CLANG_COVERAGE_MAPPING=NO
+
+  release:
+    needs: [test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 16.0
+
+      - name: Enable PrepareMetalShaders plugin
+        run: defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidation -bool YES
+
+      - name: Verify runner architecture
+        run: |
+          arch="$(uname -m)"
+          echo "arch=$arch"
+          if [ "$arch" != "arm64" ]; then
+            echo "This project requires Apple Silicon (mlx-swift). Got: $arch" >&2
+            exit 1
+          fi
+
+      - name: Build (Release)
+        run: |
+          xcodebuild build -scheme DeepSeekOCR2CLI -configuration Release -destination 'platform=macOS' -derivedDataPath ./dist -skipPackagePluginValidation ENABLE_PLUGIN_PREPAREMLSHADERS=YES CLANG_COVERAGE_MAPPING=NO
+
+      - name: Prepare Artifacts
+        run: |
+          cd ./dist/Build/Products/Release
+          chmod +x DeepSeekOCR2CLI
+          cp mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib .
+          zip -r deepseekocr2.macos.arm64.zip DeepSeekOCR2CLI default.metallib
+
+      - name: Get current date
+        run: echo "CURRENT_DATE=$(date +'%Y-%m-%d')" >> $GITHUB_ENV
+
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: nightly
+          name: "Nightly Build ${{ env.CURRENT_DATE }}"
+          draft: false
+          prerelease: true
+          allowUpdates: true
+          artifacts: ./dist/Build/Products/Release/deepseekocr2.macos.arm64.zip
+          token: ${{ secrets.GITHUB_TOKEN }}
